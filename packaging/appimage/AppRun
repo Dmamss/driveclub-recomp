@@ -12,6 +12,7 @@
 #   DriveClub.AppImage --play                prepare if needed and play
 #   DriveClub.AppImage --setup UPDATE BASE   save the folders and open the launcher
 #   DriveClub.AppImage --repair              prepare the game again and play
+#   DriveClub.AppImage --install             add it to the application menu (and so to Steam)
 #   DriveClub.AppImage --selftest            print paths and check the bundled libraries
 #   DriveClub.AppImage --version
 set -euo pipefail
@@ -193,6 +194,59 @@ pick_folder() { # pick_folder TITLE -> prints a folder, fails when no dialog is 
     fi
 }
 
+# A Steam Deck: Steam sets SteamDeck=1 for what it starts; the firmware names the model in any
+# case (Jupiter: LCD, Galileo: OLED). DRIVECLUB_STEAM_DECK=0/1 overrides the guess.
+steam_deck=0
+if [ -n "${DRIVECLUB_STEAM_DECK:-}" ]; then
+    [ "$DRIVECLUB_STEAM_DECK" != 0 ] && steam_deck=1
+elif [ "${SteamDeck:-0}" = 1 ]; then
+    steam_deck=1
+elif [ "$(cat /sys/devices/virtual/dmi/id/sys_vendor 2>/dev/null)" = Valve ]; then
+    case $(cat /sys/devices/virtual/dmi/id/product_name 2>/dev/null) in
+        Jupiter|Galileo) steam_deck=1 ;;
+    esac
+fi
+export DRIVECLUB_STEAM_DECK=$steam_deck
+
+# --install: a menu entry that starts this AppImage, so it shows in the application menu and in
+# Steam's "Add a Non-Steam Game" list. Run it again after moving the AppImage.
+install_entry() {
+    local share_dir=${XDG_DATA_HOME:-$HOME/.local/share}
+    local apps=$share_dir/applications
+    local icons=$share_dir/icons/hicolor/256x256/apps
+    local entry=$apps/driveclub-recomp.desktop
+    mkdir -p "$apps" "$icons"
+    cp -f "$appdir/driveclub-recomp.png" "$icons/driveclub-recomp.png"
+    # Exec= quoting (Desktop Entry spec): escape \ " ` and $ inside the double quotes.
+    local quoted=$self
+    quoted=${quoted//\\/\\\\}
+    quoted=${quoted//\"/\\\"}
+    quoted=${quoted//\`/\\\`}
+    quoted=${quoted//\$/\\\$}
+    {
+        echo '[Desktop Entry]'
+        echo 'Type=Application'
+        echo 'Name=DriveClub Recomp'
+        echo 'GenericName=Racing Game'
+        echo 'Comment=DriveClub (PS4) running natively on Linux'
+        echo "Exec=\"$quoted\""
+        echo 'Icon=driveclub-recomp'
+        echo 'Terminal=false'
+        echo 'Categories=Game;Simulation;'
+        echo 'StartupNotify=true'
+    } > "$entry"
+    chmod 644 "$entry"
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database "$apps" >/dev/null 2>&1 || true
+    fi
+    echo "Added DriveClub Recomp to the application menu: $entry"
+    if [ "$steam_deck" = 1 ]; then
+        echo
+        echo 'Steam Deck: in Steam (Desktop Mode) choose Games > Add a Non-Steam Game to My Library...,'
+        echo 'tick DriveClub Recomp and press Add Selected Programs. It is then in the library in Gaming Mode.'
+    fi
+}
+
 usage() {
     cat <<'EOF'
 DriveClub Recomp (native Linux)
@@ -201,6 +255,8 @@ DriveClub Recomp (native Linux)
   DriveClub.AppImage --play                Prepare the game (if needed) and play.
   DriveClub.AppImage --setup UPDATE BASE   Save the game folders and open the launcher.
   DriveClub.AppImage --repair              Prepare the game files again and play.
+  DriveClub.AppImage --install             Add it to the application menu (and to Steam's
+                                           "Add a Non-Steam Game" list).
   DriveClub.AppImage --selftest            Print the paths and check the bundled libraries.
   DriveClub.AppImage --version             Print the packaged version.
 
@@ -211,6 +267,8 @@ Environment:
                                             ~/.local/share/driveclub-recomp.
   DRIVECLUB_PORTABLE=1                      Use data/ next to the AppImage when no folder has
                                             been selected (or create a `portable` file there).
+  DRIVECLUB_STEAM_DECK=0|1                  Treat this machine as a Steam Deck or not (the
+                                            launcher then starts with the Steam Deck preset).
   BB_*                                      Runtime options (see the project README).
 
 Use DATA FOLDER > Change... in the launcher to pick or move the data folder. The choice is
@@ -241,6 +299,7 @@ case ${1:-} in
         echo "DEFAULT_DATA=$default_data"
         echo "DATA_POINTER=$pointer_write"
         echo "PORTABLE=$portable"
+        echo "STEAM_DECK=$steam_deck"
         echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
         echo '--- game folders ---'
         echo "update=${update_dir:-<none>}"
@@ -280,6 +339,10 @@ case ${1:-} in
     --launcher)
         mode=launcher
         shift
+        ;;
+    --install)
+        install_entry
+        exit 0
         ;;
     --play|--run)
         mode=play

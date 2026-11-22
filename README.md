@@ -38,6 +38,13 @@ or set `DRIVECLUB_UPDATE_DIR` and `DRIVECLUB_BASE_DIR`. The choice is stored in 
 beside the AppImage; `DRIVECLUB_DATA_DIR` overrides it, and a `portable` marker selects `data/`
 when no folder has been chosen.
 
+### Steam Deck
+The same AppImage runs natively on the Steam Deck (LCD and OLED). The launcher recognises the
+Deck, starts with a **Steam Deck (1280x800)** preset made for its screen, is driven with the
+gamepad (L1/R1 change pages, Start plays) and fills the screen in Gaming Mode.
+`--install` adds the AppImage to the application menu so Steam's *Add a Non-Steam Game* lists it.
+See [Steam Deck](docs/STEAM_DECK.md) for the step-by-step setup.
+
 ## Highlights
 - The game's own x86-64 code runs directly on your CPU, with no CPU emulation. The PS4 system libraries are reimplemented and the GPU commands are translated to Vulkan, similar to Wine and DXVK
 - Playable from the menus through races, photo mode and saves, with trophies and multiplayer: private sessions with friends, and a public lobby that is being tested on our Discord

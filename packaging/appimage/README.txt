@@ -63,6 +63,8 @@ Options
   --play                Prepare the game if needed and play without opening the launcher.
   --setup UPDATE BASE   Save the game folders and open the launcher.
   --repair              Prepare the game files again (after replacing a dump) and play.
+  --install             Add the AppImage to the application menu (and to Steam's list of
+                        non-Steam games).
   --selftest            Print the paths and check the bundled libraries.
   --version             Print the packaged version.
   --help                Show this text.
@@ -86,5 +88,17 @@ x86_64 Linux with a Vulkan 1.3 driver (radv, anv or the NVIDIA proprietary drive
 uses the host's glibc, Vulkan loader/driver, X11 stack (XWayland on Wayland desktops) and audio
 backends; everything else is bundled. Without libfuse2, run it with --appimage-extract-and-run
 (or APPIMAGE_EXTRACT_AND_RUN=1). The launcher uses SDL3's own window and renderer, so it needs no
-GTK or Qt installation. The Steam Deck's Gaming Mode needs the AppImage added as a non-Steam
-game; the launcher can also be used there in Desktop Mode.
+GTK or Qt installation.
+
+Steam Deck
+----------
+The AppImage runs natively on the Steam Deck. The launcher recognises the Deck, starts with the
+"Steam Deck (1280x800)" quality preset and is driven with the gamepad (D-pad and A/B to move and
+choose, L1/R1 for the pages, Start for PLAY, View for SAVE); in Gaming Mode it fills the screen.
+For Gaming Mode, add the AppImage to Steam once from Desktop Mode:
+
+  ./driveclub-recomp-<version>-x86_64.AppImage --install
+
+then in Steam: Games > Add a Non-Steam Game to My Library..., tick DriveClub Recomp. The full
+guide is docs/STEAM_DECK.md in the source tree. DRIVECLUB_STEAM_DECK=1 (or 0) overrides the
+detection.

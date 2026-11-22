@@ -39,6 +39,7 @@
 #include <vector>
 
 #include <fcntl.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -82,6 +83,8 @@ struct Paths {
 Paths g_paths;
 std::string g_version = "dev";
 int g_display_hz = 0;
+bool g_steam_deck = false;   // a Steam Deck (LCD "Jupiter" or OLED "Galileo"), see DetectSteamDeck
+bool g_gaming_mode = false;  // inside Steam's Gaming Mode (gamescope), where there is no mouse
 bool g_quit = false;
 SDL_Window* g_window = nullptr;
 ImFont* g_font_body = nullptr;
@@ -128,7 +131,7 @@ struct Settings {
   int brake_assist = 0;   // In-game, Off, Low, Medium, High
   int hardcore = 0;       // In-game, Off, On
   int wheel_assist = 0;   // In-game, Off, On
-  int preset = 0;          // Custom, Handheld, Low, Medium, High, Ultra, PS4
+  int preset = 0;          // Custom, Handheld, Low, Medium, High, Ultra, PS4, Steam Deck
   int fsr_ver = 0;         // FSR 3.1, FSR 4, FSR (AMD driver)
   int reflex = 0;          // Off, On, On + Boost
   int model_lod = 0;       // Highest .. Lowest
@@ -255,8 +258,9 @@ const char* const kLanguageName[21] = {
     "Finnish", "Swedish", "Danish", "Norwegian", "Polish", "Portuguese (Brazil)",
     "English (UK)", "Turkish", "Spanish (Mexico)"};
 
-const char* const kPresetName[7] = {"Custom", "Handheld (720p)", "Low", "Medium", "High",
-                                    "Ultra", "PS4 (original)"};
+constexpr int kPresetSteamDeck = 7;
+const char* const kPresetName[8] = {"Custom", "Handheld (720p)", "Low", "Medium", "High",
+                                    "Ultra", "PS4 (original)", "Steam Deck (1280x800)"};
 const char* const kFsrName[3] = {"FSR 3.1", "FSR 4", "FSR (AMD driver)"};
 const char* const kReflexName[3] = {"Off", "On", "On + Boost"};
 const char* const kLodName[5] = {"Highest", "High", "Default", "Low", "Lowest"};
@@ -874,6 +878,31 @@ void LoadWheelSettings() {
   ParseBool(kv, "wheel_ffb_invert", g.ffb_invert);
 }
 
+std::string ReadLine(const char* path) {
+  std::ifstream in(path);
+  std::string line;
+  if (in) std::getline(in, line);
+  while (!line.empty() && std::isspace(static_cast<unsigned char>(line.back()))) line.pop_back();
+  return line;
+}
+
+bool EnvOn(const char* name) {
+  const char* value = std::getenv(name);
+  return value && *value && std::strcmp(value, "0") != 0;
+}
+
+// Steam sets SteamDeck=1 for everything it starts on a Deck; the firmware names the model
+// either way (Jupiter: LCD, Galileo: OLED). DRIVECLUB_STEAM_DECK=0/1 overrides the guess.
+void DetectSteamDeck() {
+  const std::string vendor = ReadLine("/sys/devices/virtual/dmi/id/sys_vendor");
+  const std::string product = ReadLine("/sys/devices/virtual/dmi/id/product_name");
+  g_steam_deck = EnvOn("SteamDeck") || (vendor == "Valve" && (product == "Jupiter" || product == "Galileo"));
+  if (const char* force = std::getenv("DRIVECLUB_STEAM_DECK")) g_steam_deck = *force && std::strcmp(force, "0") != 0;
+  const char* desktop = std::getenv("XDG_CURRENT_DESKTOP");
+  g_gaming_mode = EnvOn("SteamGamepadUI") || std::getenv("GAMESCOPE_WAYLAND_DISPLAY") != nullptr ||
+                  (desktop && strcasecmp(desktop, "gamescope") == 0);
+}
+
 void LoadSettings() {
   const auto kv = ReadIni(LauncherIni());
   const auto legacy = ReadIni(LegacyConfig());
@@ -1014,9 +1043,17 @@ int MemoryTier() {
   else if (g.output >= 3) output = 2;
   else if (g.output == 2) output = 1;
   if (g.render >= 5) render = 3;
-  else if (g.wide >= 10) render = 3;
-  else if (g.wide > 0 || g.render >= 3) render = 2;
+  else if (g.render >= 3) render = 2;
   else if (g.render == 2) render = 1;
+  if (g.wide > 0) {
+    // A widescreen size that fits in 1080p (1280x800 for the Steam Deck, 1280x960, 1440x1080)
+    // needs only the 1440p budget, as in the Windows launcher; larger ones keep the 4K or 8K one.
+    unsigned w = 0, h = 0;
+    int wide = g.wide >= 10 ? 3 : 2;
+    if (std::sscanf(kWideName[g.wide], "%ux%u", &w, &h) == 2 && w > 0 && w <= 1920 && h > 0 && h <= 1080)
+      wide = 1;
+    render = std::max(render, wide);
+  }
   return std::max(output, render);
 }
 
@@ -1049,7 +1086,7 @@ void Sanitize() {
   g.brake_assist = std::clamp(g.brake_assist, 0, 4);
   g.hardcore = std::clamp(g.hardcore, 0, 2);
   g.wheel_assist = std::clamp(g.wheel_assist, 0, 2);
-  g.preset = std::clamp(g.preset, 0, 6);
+  g.preset = std::clamp(g.preset, 0, kPresetSteamDeck);
   g.fsr_ver = std::clamp(g.fsr_ver, 0, 2);
   g.reflex = std::clamp(g.reflex, 0, 2);
   g.model_lod = std::clamp(g.model_lod, -2, 2);
@@ -1084,7 +1121,7 @@ void Sanitize() {
 }
 
 void ApplyPreset(int preset) {
-  g.preset = std::clamp(preset, 0, 6);
+  g.preset = std::clamp(preset, 0, kPresetSteamDeck);
   switch (g.preset) {
     case 1: g.frame_rate = 2; g.output = 1; g.render = 1; g.wide = 0; g.aa = 0; g.upscale = 0;
             g.aniso = 1; g.mirror = 1; g.hdr = false; break;
@@ -1098,6 +1135,12 @@ void ApplyPreset(int preset) {
             g.aa = 1; g.upscale = 1; g.aniso = 5; g.mirror = 0; break;
     case 6: g.frame_rate = 0; g.output = 0; g.render = 0; g.wide = 0; g.aa = 0; g.upscale = 0;
             g.aniso = 0; g.mirror = 0; g.hdr = false; g.fov_fix = false; break;
+    // The Deck's own 1280x800 (16:10) screen, rendered at that size: fewer pixels than the
+    // PS4's 1080p, at the PS4's 30 FPS so the frame time stays even on a 60 Hz panel.
+    // Static mirrors and 2x filtering spare the small GPU; HDR stays off (the LCD has none).
+    case kPresetSteamDeck:
+            g.frame_rate = 0; g.output = 0; g.render = 0; g.wide = 2; g.aa = 0; g.upscale = 0;
+            g.aniso = 2; g.mirror = 1; g.hdr = false; g.fullscreen = true; break;
     default: break;
   }
   g.camera_patch = g.frame_rate != 0;
@@ -1402,6 +1445,7 @@ void ResetDefaults() {
     if (patch.always || IsManagedPatch(patch.name)) continue;
     g.extras[patch.name] = patch.default_on;
   }
+  if (g_steam_deck) ApplyPreset(kPresetSteamDeck);  // a Deck's defaults are its own preset
   Sanitize();
   SyncFolderBuffers();
   ValidateFolders();
@@ -2683,9 +2727,12 @@ void GamePage() {
 void DisplayPage() {
   if (BeginCard("PRESET")) {
     if (ComboRow("Quality preset", "Handheld and Low help a weak GPU; Medium and High keep 1080p internals "
-                                   "with FSR; Ultra renders more pixels; PS4 restores the original console look. "
+                                   "with FSR; Ultra renders more pixels; PS4 restores the original console look; "
+                                   "Steam Deck fills the Deck's 1280x800 screen at 30 FPS. "
                                    "Adjust the rows below after picking one.",
-                 &g.preset, kPresetName, 7)) ApplyPreset(g.preset);
+                 &g.preset, kPresetName, 8)) ApplyPreset(g.preset);
+    if (g_steam_deck && g.preset != kPresetSteamDeck)
+      ImGui::TextDisabled("Steam Deck detected: the Steam Deck preset fits its screen.");
     if (g.preset == 0) ImGui::TextDisabled("Custom settings.");
   }
   EndCard();
@@ -3318,7 +3365,7 @@ void DrawHeader() {
 
   ImGui::PushFont(g_font_small);
   ImGui::SetCursorScreenPos(ImVec2(pos.x + kMargin + 16, pos.y + 58));
-  ImGui::TextColored(kMuted, "NATIVE LINUX LAUNCHER");
+  ImGui::TextColored(kMuted, g_steam_deck ? "NATIVE STEAM DECK LAUNCHER" : "NATIVE LINUX LAUNCHER");
 
   std::string version = g_version;
   if (!version.empty() && version[0] != 'v') version = "v" + version;
@@ -3412,7 +3459,8 @@ void DrawFooter() {
   } else if (!g_status.empty()) {
     ImGui::TextColored(g_status_error ? kBad : kMuted, "%s", g_status.c_str());
   } else if (FoldersOk()) {
-    ImGui::TextDisabled("Ready. Press Play to prepare and start.");
+    ImGui::TextDisabled(g_steam_deck ? "Ready. Press Play (or Start) to prepare and start. L1/R1: pages."
+                                     : "Ready. Press Play to prepare and start.");
   } else {
     ImGui::TextDisabled("Choose both game folders, then press Play.");
   }
@@ -3496,6 +3544,31 @@ void DrawUI() {
   if (g_browser.open) DrawBrowser();
 }
 
+// Gamepad shortcuts on top of ImGui's own navigation (D-pad / stick to move, A to choose,
+// B to go back): the shoulder buttons switch pages, Start plays, View saves.
+void HandleGamepadButton(Uint8 button) {
+  const bool idle = !g_preparing && !g_data_dialog_open && !g_data_copying && !g_browser.open;
+  if (!idle || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) return;
+  switch (button) {
+    case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER:
+      g_tab = (g_tab + kTabCount - 1) % kTabCount;
+      g_scroll_top = true;
+      break;
+    case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER:
+      g_tab = (g_tab + 1) % kTabCount;
+      g_scroll_top = true;
+      break;
+    case SDL_GAMEPAD_BUTTON_START:
+      StartPrepare();
+      break;
+    case SDL_GAMEPAD_BUTTON_BACK:
+      SaveSettings();
+      break;
+    default:
+      break;
+  }
+}
+
 // ------------------------------------------------------------------------------------------
 // entry point
 // ------------------------------------------------------------------------------------------
@@ -3514,10 +3587,15 @@ int Run(int argc, char** argv) {
     return 0;
   }
 
+  DetectSteamDeck();
+  const bool first_run = !IsFile(LauncherIni());
   LoadSettings();
+  // A first start on a Steam Deck begins with the settings made for its screen.
+  if (first_run && g_steam_deck) ApplyPreset(kPresetSteamDeck);
   if (g.autoplay && FoldersOk()) StartPrepare();
 
-  if (!SDL_Init(SDL_INIT_VIDEO)) {
+  // The gamepad drives the launcher too: on a Steam Deck in Gaming Mode it is the only input.
+  if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
     std::fprintf(stderr, "driveclub-launcher: could not start SDL: %s\n", SDL_GetError());
     return 1;
   }
@@ -3527,7 +3605,10 @@ int Run(int argc, char** argv) {
   Sanitize();
 
   std::string title = "DriveClub Recomp " + g_version + " - Launcher";
-  g_window = SDL_CreateWindow(title.c_str(), 1180, 800, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+  SDL_WindowFlags window_flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+  if (g_gaming_mode) window_flags |= SDL_WINDOW_FULLSCREEN;
+  // 1180x800 fits the Deck's 1280x800 screen in Desktop Mode as well.
+  g_window = SDL_CreateWindow(title.c_str(), 1180, 800, window_flags);
   if (!g_window) {
     std::fprintf(stderr, "driveclub-launcher: could not create the window: %s\n", SDL_GetError());
     SDL_Quit();
@@ -3546,7 +3627,7 @@ int Run(int argc, char** argv) {
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
   ImGuiIO& io = ImGui::GetIO();
-  io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+  io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
   io.IniFilename = nullptr;
   LoadFonts();
   if (!ImGui_ImplSDL3_InitForSDLRenderer(g_window, renderer)) {
@@ -3577,6 +3658,8 @@ int Run(int argc, char** argv) {
         if (!g_preparing && !g_data_copying) g_quit = true;
       } else if (event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && event.window.windowID == SDL_GetWindowID(g_window)) {
         if (!g_preparing && !g_data_copying) g_quit = true;
+      } else if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
+        HandleGamepadButton(event.gbutton.button);
       }
     }
     PollBenchmark();
