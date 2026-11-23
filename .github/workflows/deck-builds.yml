@@ -6,23 +6,12 @@ name: Steam Deck builds
 #   B   A + Zen 2 code generation (-march=znver2)
 #   B2  B with floating point contraction off (no fused multiply-add), in case B changes results
 #   C   A + LTO
-#   pgo-gen  instrumented build (clang 20) that records a profile when played on the Deck
-# The PGO build that uses the profile is the separate "pgo-use" job, started by hand once the
-# raw profiles from the Deck are in pgo-deck/.
+#   pgogen   instrumented build (clang 19) that records a profile when played on the Deck
+# .github/deck-builds-only.txt (optional) lists the variants to build, comma separated. When
+# pgo-deck/ holds raw profiles from the Deck, the pgo-use job builds with them, using the LTO and
+# code generation flags in .github/deck-pgo.env (BB_LTO=..., BB_ARCH_FLAGS=...).
 
 on:
-  workflow_dispatch:
-    inputs:
-      pgo_use:
-        description: 'Build with the profile in pgo-deck/ (clang 20)'
-        type: boolean
-        default: false
-      pgo_lto:
-        description: 'LTO for the PGO build (ON/OFF)'
-        default: 'OFF'
-      pgo_arch:
-        description: 'Extra code generation flags for the PGO build (empty for none)'
-        default: ''
   push:
     branches: [deck-optim]
 
@@ -34,39 +23,46 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+      any: ${{ steps.pick.outputs.any }}
+      pgo_use: ${{ steps.pick.outputs.pgo_use }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: pick
+        run: |
+          ONLY=A,B,B2,C,pgogen
+          [ -f .github/deck-builds-only.txt ] && ONLY=$(tr -d ' \n' < .github/deck-builds-only.txt)
+          export ONLY
+          if ls pgo-deck/*.profraw >/dev/null 2>&1; then echo "pgo_use=true" >> "$GITHUB_OUTPUT"; else echo "pgo_use=false" >> "$GITHUB_OUTPUT"; fi
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          # clang '' = Ubuntu's clang (the configuration of appimage.yml). clang 20 cannot build
+          # liverpool.cpp with Ubuntu's libstdc++ 14 (std::jthread with bind_front), so the PGO
+          # builds use clang 19.
+          all_variants = [
+              {"name": "A", "lto": "OFF", "arch": "", "clang": "", "pgo": "off"},
+              {"name": "B", "lto": "OFF", "arch": "-march=znver2 -mtune=znver2", "clang": "", "pgo": "off"},
+              {"name": "B2", "lto": "OFF", "arch": "-march=znver2 -mtune=znver2 -ffp-contract=off", "clang": "", "pgo": "off"},
+              {"name": "C", "lto": "ON", "arch": "", "clang": "", "pgo": "off"},
+              {"name": "pgogen", "lto": "OFF", "arch": "", "clang": "19", "pgo": "generate"},
+          ]
+          wanted = {v.strip() for v in os.environ["ONLY"].split(",") if v.strip()}
+          picked = [v for v in all_variants if v["name"] in wanted]
+          print("matrix=" + json.dumps({"include": picked}))
+          print("any=" + ("true" if picked else "false"))
+          PY
+
   variants:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.pgo_use) }}
+    needs: plan
+    if: needs.plan.outputs.any == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - name: A
-            lto: 'OFF'
-            arch: ''
-            clang: ''
-            pgo: 'off'
-          - name: B
-            lto: 'OFF'
-            arch: '-march=znver2 -mtune=znver2'
-            clang: ''
-            pgo: 'off'
-          - name: B2
-            lto: 'OFF'
-            arch: '-march=znver2 -mtune=znver2 -ffp-contract=off'
-            clang: ''
-            pgo: 'off'
-          - name: C
-            lto: 'ON'
-            arch: ''
-            clang: ''
-            pgo: 'off'
-          - name: pgogen
-            lto: 'OFF'
-            arch: ''
-            clang: '20'
-            pgo: 'generate'
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     env:
       BB_LTO: ${{ matrix.lto }}
       BB_PGO: ${{ matrix.pgo }}
@@ -157,15 +153,22 @@ jobs:
           [ -f out/gpu-build.log ] && tail -150 out/gpu-build.log || true
 
   pgo-use:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.pgo_use }}
+    needs: plan
+    if: needs.plan.outputs.pgo_use == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     env:
-      BB_LTO: ${{ inputs.pgo_lto }}
       BB_PGO: 'use'
-      BB_ARCH_FLAGS: ${{ inputs.pgo_arch }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: PGO build settings
+        run: |
+          BB_LTO=OFF; BB_ARCH_FLAGS=
+          [ -f .github/deck-pgo.env ] && . .github/deck-pgo.env
+          echo "BB_LTO=$BB_LTO" >> "$GITHUB_ENV"
+          echo "BB_ARCH_FLAGS=$BB_ARCH_FLAGS" >> "$GITHUB_ENV"
+          echo "PGO build: LTO $BB_LTO, arch flags '$BB_ARCH_FLAGS'"
 
       - name: Install build dependencies
         run: |
@@ -182,14 +185,14 @@ jobs:
             libxkbcommon-dev libudev-dev libdrm-dev \
             nasm squashfs-tools
           wget -q https://apt.llvm.org/llvm.sh
-          sudo bash llvm.sh 20
-          echo "CC=clang-20" >> "$GITHUB_ENV"
-          echo "CXX=clang++-20" >> "$GITHUB_ENV"
+          sudo bash llvm.sh 19
+          echo "CC=clang-19" >> "$GITHUB_ENV"
+          echo "CXX=clang++-19" >> "$GITHUB_ENV"
 
       - name: Merge the Deck profiles
         run: |
           ls -l pgo-deck/
-          llvm-profdata-20 merge -o pgo-deck/default.profdata pgo-deck/*.profraw
+          llvm-profdata-19 merge -o pgo-deck/default.profdata pgo-deck/*.profraw
           echo "BB_PGO_DIR=$PWD/pgo-deck" >> "$GITHUB_ENV"
 
       - name: Cache AppImage dependencies
