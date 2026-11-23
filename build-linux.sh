@@ -13,6 +13,7 @@
 #   BB_PGO_DIR        profile directory (default pgo)
 #   BB_VULKAN_HEADERS include directory with a recent vulkan/vulkan.h (see packaging/appimage/fetch-deps.sh)
 #   BB_DEPS_DIR       prefix with the AppImage build dependencies (default out/deps)
+#   BB_DIAGNOSTICS    ON builds the frame trace and profiling aids (BB_FRAME_TRACE, ...) (default OFF)
 #   BB_ARCH_FLAGS     extra code generation flags for libbbgpu and the runtime, e.g.
 #                     "-march=znver2 -mtune=znver2" for a Steam Deck only build (default none)
 set -euo pipefail
@@ -58,7 +59,7 @@ cmake_args=(
     -DBB_PGO="$pgo"
     -DBB_PGO_DIR="$pgo_dir"
     -DBB_LTO="${BB_LTO:-ON}"
-    -DBB_DIAGNOSTICS=OFF
+    -DBB_DIAGNOSTICS="${BB_DIAGNOSTICS:-OFF}"
     -DCMAKE_C_COMPILER="$CC"
     -DCMAKE_CXX_COMPILER="$CXX"
     -DCMAKE_C_FLAGS="-ffile-prefix-map=$PWD=. ${BB_ARCH_FLAGS:-}"
@@ -93,6 +94,7 @@ cflags=(-std=c11 -O2 -g -Wall -Wextra -Wno-format-truncation -Wno-unknown-pragma
         -Werror=incompatible-pointer-types -pthread -fno-pie -ffile-prefix-map="$PWD"=.)
 read -r -a arch_flags <<< "${BB_ARCH_FLAGS:-}"
 cflags+=("${arch_flags[@]}")
+[ "${BB_DIAGNOSTICS:-OFF}" = ON ] && cflags+=(-DBB_DIAGNOSTICS=1)
 runtime=(src/runtime*.c)
 "$CC" "${cflags[@]}" -no-pie "${includes[@]}" -I. -Isrc src/probe.c "${runtime[@]}" src/vulkan_smoke.c \
     out/libatrac9.a -Lout/gpu -lbbgpu \

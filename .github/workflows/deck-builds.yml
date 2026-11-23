@@ -6,6 +6,7 @@ name: Steam Deck builds
 #   B   A + Zen 2 code generation (-march=znver2)
 #   B2  B with floating point contraction off (no fused multiply-add), in case B changes results
 #   C   A + LTO
+#   Cdiag    C with the diagnostics (BB_FRAME_TRACE) built in, to find the slow frames
 #   pgogen   instrumented build (clang 19) that records a profile when played on the Deck
 # .github/deck-builds-only.txt (optional) lists the variants to build, comma separated. When
 # pgo-deck/ holds raw profiles from the Deck, the pgo-use job builds with them, using the LTO and
@@ -48,6 +49,7 @@ jobs:
               {"name": "B2", "lto": "OFF", "arch": "-march=znver2 -mtune=znver2 -ffp-contract=off", "clang": "", "pgo": "off"},
               {"name": "C", "lto": "ON", "arch": "", "clang": "", "pgo": "off"},
               {"name": "pgogen", "lto": "OFF", "arch": "", "clang": "19", "pgo": "generate"},
+              {"name": "Cdiag", "lto": "ON", "arch": "", "clang": "", "pgo": "off", "diag": "ON"},
           ]
           wanted = {v.strip() for v in os.environ["ONLY"].split(",") if v.strip()}
           picked = [v for v in all_variants if v["name"] in wanted]
@@ -67,6 +69,7 @@ jobs:
       BB_LTO: ${{ matrix.lto }}
       BB_PGO: ${{ matrix.pgo }}
       BB_ARCH_FLAGS: ${{ matrix.arch }}
+      BB_DIAGNOSTICS: ${{ matrix.diag || 'OFF' }}
     steps:
       - uses: actions/checkout@v4
 
