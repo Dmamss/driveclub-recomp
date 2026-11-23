@@ -13,6 +13,8 @@
 #   BB_PGO_DIR        profile directory (default pgo)
 #   BB_VULKAN_HEADERS include directory with a recent vulkan/vulkan.h (see packaging/appimage/fetch-deps.sh)
 #   BB_DEPS_DIR       prefix with the AppImage build dependencies (default out/deps)
+#   BB_ARCH_FLAGS     extra code generation flags for libbbgpu and the runtime, e.g.
+#                     "-march=znver2 -mtune=znver2" for a Steam Deck only build (default none)
 set -euo pipefail
 cd -- "$(dirname -- "$0")"
 CC=${CC:-$(command -v cc || command -v gcc || true)}
@@ -59,15 +61,15 @@ cmake_args=(
     -DBB_DIAGNOSTICS=OFF
     -DCMAKE_C_COMPILER="$CC"
     -DCMAKE_CXX_COMPILER="$CXX"
-    -DCMAKE_C_FLAGS="-ffile-prefix-map=$PWD=."
-    -DCMAKE_CXX_FLAGS="-ffile-prefix-map=$PWD=."
+    -DCMAKE_C_FLAGS="-ffile-prefix-map=$PWD=. ${BB_ARCH_FLAGS:-}"
+    -DCMAKE_CXX_FLAGS="-ffile-prefix-map=$PWD=. ${BB_ARCH_FLAGS:-}"
 )
 if [ -n "$vulkan_headers" ]; then
     cmake_args+=(-DVulkan_INCLUDE_DIR="$vulkan_headers" -DCMAKE_DISABLE_FIND_PACKAGE_VulkanHeaders=ON)
 fi
 if [ -n "${CMAKE_PREFIX_PATH:-}" ]; then cmake_args+=(-DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH"); fi
 cmake "${cmake_args[@]}" >/dev/null
-echo "GPU library: $("$CXX" --version | head -1), PGO $pgo, LTO ${BB_LTO:-ON}"
+echo "GPU library: $("$CXX" --version | head -1), PGO $pgo, LTO ${BB_LTO:-ON}, arch flags: ${BB_ARCH_FLAGS:-none}"
 # A failed GPU build must stop here: an older libbbgpu.so would otherwise be used silently.
 if ! ninja -C out/gpu bbgpu > out/gpu-build.log 2>&1; then
     grep -v '^[[]' out/gpu-build.log | tail -40 >&2
@@ -89,6 +91,8 @@ fi
 cflags=(-std=c11 -O2 -g -Wall -Wextra -Wno-format-truncation -Wno-unknown-pragmas
         -Wno-unknown-warning-option -Werror=implicit-function-declaration
         -Werror=incompatible-pointer-types -pthread -fno-pie -ffile-prefix-map="$PWD"=.)
+read -r -a arch_flags <<< "${BB_ARCH_FLAGS:-}"
+cflags+=("${arch_flags[@]}")
 runtime=(src/runtime*.c)
 "$CC" "${cflags[@]}" -no-pie "${includes[@]}" -I. -Isrc src/probe.c "${runtime[@]}" src/vulkan_smoke.c \
     out/libatrac9.a -Lout/gpu -lbbgpu \

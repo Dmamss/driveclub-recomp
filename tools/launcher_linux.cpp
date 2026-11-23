@@ -109,6 +109,7 @@ struct Settings {
   bool fov_fix = false;
   int aa = 0;          // 0 game, 1 FSR 3.1, 2 DLSS
   int upscale = 0;     // Native, Quality, Balanced, Performance, Ultra Performance
+  int frame_gen = 0;   // 0 off, 1 FSR 3 frame generation (2x)
   int sharpness = 80;
   bool hdr = false;
   int hdr_paper = 350;
@@ -245,6 +246,7 @@ const char* const kWideName[18] = {
     "2160x1440 (3:2)", "1280x960 (4:3)", "1440x1080 (4:3)", "5760x1080 (48:9)", "7680x1080 (64:9)"};
 const char* const kAaName[3] = {"Game (original)", "FSR 3.1", "DLSS (RTX)"};
 const char* const kUpscaleName[5] = {"Native", "Quality", "Balanced", "Performance", "Ultra Performance"};
+const char* const kFrameGenName[2] = {"Off", "FSR 3 (2x)"};
 const char* const kAnisoName[6] = {"Automatic", "Off", "2x", "4x", "8x", "16x"};
 const int kAnisoValue[6] = {0, 0, 2, 4, 8, 16};
 const char* const kMirrorName[2] = {"Live", "Static (faster)"};
@@ -945,6 +947,7 @@ void LoadSettings() {
 
   ParseInt(kv, "aa", g.aa);
   ParseInt(kv, "upscale", g.upscale);
+  ParseInt(kv, "frame_gen", g.frame_gen);
   ParseInt(kv, "sharpness", g.sharpness);
   ParseBool(kv, "hdr", g.hdr);
   ParseInt(kv, "hdr_paper", g.hdr_paper);
@@ -1070,6 +1073,7 @@ void Sanitize() {
   if (g.wide > 0) g.output = g.render = 0;
   g.aa = std::clamp(g.aa, 0, 2);
   g.upscale = std::clamp(g.upscale, 0, 4);
+  g.frame_gen = std::clamp(g.frame_gen, 0, 1);
   g.sharpness = std::clamp(g.sharpness, 0, 100);
   g.hdr_paper = std::clamp(g.hdr_paper, 100, 600);
   g.hdr_peak = std::clamp(g.hdr_peak, 400, 2000);
@@ -1170,7 +1174,8 @@ std::map<std::string, std::string> EnvironmentForLaunch() {
   set("BB_LOCK_HORIZON", std::to_string(g.lock_horizon));
   set("BB_CAMERA_SHAKE", std::to_string(g.camera_shake));
   set("BB_MIRROR_RATE", g.mirror == 1 ? "0" : "1");
-  set("BB_FRAME_GEN", "off");
+  set("BB_FRAME_GEN", g.frame_gen == 1 ? "fsr3" : "off");
+  if (g.frame_gen == 1) set("BB_FRAME_GEN_MULTIPLIER", "2");
   set("BB_AA", g.aa == 0 ? "off" : g.aa == 1 ? "fsr3" : "dlss");
   set("BB_AA_SCALE", g.upscale == 0 ? "native" : g.upscale == 1 ? "quality" : g.upscale == 2 ? "balanced"
                             : g.upscale == 3 ? "performance" : "ultra_performance");
@@ -1343,6 +1348,7 @@ bool SaveSettings() {
       << "fov_fix=" << (g.fov_fix ? 1 : 0) << "\n"
       << "aa=" << g.aa << "\n"
       << "upscale=" << g.upscale << "\n"
+      << "frame_gen=" << g.frame_gen << "\n"
       << "sharpness=" << g.sharpness << "\n"
       << "hdr=" << (g.hdr ? 1 : 0) << "\n"
       << "hdr_paper=" << g.hdr_paper << "\n"
@@ -2809,6 +2815,13 @@ void DisplayPage() {
     }
     if (ComboRow("Anisotropic filtering", "Keeps textures on roads and terrain sharp at a shallow angle.",
                  &g.aniso, kAnisoName, 6)) g.dirty = true;
+  }
+  EndCard();
+
+  if (BeginCard("FRAME GENERATION")) {
+    if (ComboRow("Frame generation", "FSR 3 inserts one generated frame between two real ones (30 to 60 shown). "
+                                     "The game itself still runs at its frame rate; off by default.",
+                 &g.frame_gen, kFrameGenName, 2)) g.dirty = true;
   }
   EndCard();
 
